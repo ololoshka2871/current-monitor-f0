@@ -11,7 +11,8 @@ use cortex_m_rt::entry;
 // без этого будет ошибка отсутвия векторов прерываний
 use stm32f0xx_hal as hal;
 
-use hal::{i2c::I2c, pac, prelude::*};
+use hal::stm32f0::stm32f0x2::Interrupt;
+use hal::{i2c::I2c, pac, pac::interrupt, prelude::*};
 
 use ina219::{INA219, INA219_ADDR};
 
@@ -30,32 +31,45 @@ fn main() -> ! {
     // Initialize the allocator BEFORE you use it
     init_heap();
 
-    let i2c = if let Some(p) = pac::Peripherals::take() {
-        cortex_m::interrupt::free(move |cs| {
-            let mut flash = p.FLASH;
+    let (i2c, usb_bus, nvic) =
+        if let (Some(p), Some(dp)) = (cortex_m::Peripherals::take(), pac::Peripherals::take()) {
+            cortex_m::interrupt::free(move |cs| {
+                let mut flash = dp.FLASH;
 
-            let mut rcc = p
-                .RCC
-                .configure()
-                .hsi48()
-                .enable_crs(p.CRS)
-                .sysclk(48.mhz())
-                .pclk(24.mhz())
-                .freeze(&mut flash);
+                let mut rcc = dp
+                    .RCC
+                    .configure()
+                    .hsi48()
+                    .enable_crs(dp.CRS)
+                    .sysclk(48.mhz())
+                    .pclk(24.mhz())
+                    .freeze(&mut flash);
 
-            let gpiob = p.GPIOB.split(&mut rcc);
+                let gpiob = dp.GPIOB.split(&mut rcc);
 
-            // Configure pins for I2C
-            let scl = gpiob.pb10.into_alternate_af1(cs).internal_pull_up(cs, true);
-            let sda = gpiob.pb11.into_alternate_af1(cs).internal_pull_up(cs, true);
+                // Configure pins for I2C
+                let scl = gpiob.pb10.into_alternate_af1(cs).internal_pull_up(cs, true);
+                let sda = gpiob.pb11.into_alternate_af1(cs).internal_pull_up(cs, true);
 
-            // Configure I2C with 100kHz rate
-            I2c::i2c1(p.I2C1, (scl, sda), 100.khz(), &mut rcc)
-        })
-    } else {
-        defmt::error!("Failed to take peripherials!");
-        panic!();
-    };
+                // Configure I2C with 100kHz rate
+                let i2c = I2c::i2c1(dp.I2C1, (scl, sda), 100.khz(), &mut rcc);
+
+                let gpioa = dp.GPIOA.split(&mut rcc);
+
+                let usb = hal::usb::Peripheral {
+                    usb: dp.USB,
+                    pin_dm: gpioa.pa11,
+                    pin_dp: gpioa.pa12,
+                };
+
+                let usb_bus = hal::usb::UsbBus::new(usb);
+
+                (i2c, usb_bus, p.NVIC)
+            })
+        } else {
+            defmt::error!("Failed to take peripherials!");
+            panic!();
+        };
 
     let mut ina = INA219::new(
         i2c,
@@ -67,7 +81,25 @@ fn main() -> ! {
         panic!();
     }
 
+    let mut serial = usbd_serial::SerialPort::new(&usb_bus);
+
+    let mut usb_dev = usb_device::device::UsbDeviceBuilder::new(
+        &usb_bus,
+        usb_device::device::UsbVidPid(0x16c0, 0x27dd),
+    )
+    .manufacturer("Shilo_XyZ_")
+    .product("Fast Ampermeter")
+    .serial_number("0000001")
+    .device_class(usbd_serial::USB_CLASS_CDC)
+    .build();
+
+    unsafe {
+        let c: *mut cortex_m::peripheral::NVIC = &nvic as *const _ as *mut _;
+        (*c).set_priority(Interrupt::USB, 1)
+    }
+
     loop {
+        /*
         let voltage = ina.voltage().unwrap();
         defmt::info!("bus voltage: {}", voltage);
 
@@ -79,7 +111,65 @@ fn main() -> ! {
 
         let power = ina.power().unwrap();
         defmt::info!("power: {}", power);
+        */
+
+        // Важно! Список передаваемый сюда в том же порядке,
+        // что были инициализированы интерфейсы
+        let res = usb_dev.poll(&mut [&mut serial]);
+
+        if !res {
+            /* TODO
+            // block until usb interrupt
+            // enable usb interrupt
+            unsafe { cortex_m::peripheral::NVIC::unmask(Interrupt::USB) };
+
+            // sleep
+            cortex_m::asm::wfi();
+
+            // disable usb interrupt
+            cortex_m::peripheral::NVIC::mask(Interrupt::USB);
+            */
+        } else {
+            serial_echo(&mut serial);
+        }
     }
+}
+
+fn serial_echo<B: usb_device::bus::UsbBus>(serial: &mut usbd_serial::SerialPort<B>) {
+    let mut buf = [0u8; 64];
+
+    match serial.read(&mut buf) {
+        Ok(count) if count > 0 => {
+            // Echo back in upper case
+            for c in buf[0..count].iter_mut() {
+                if 0x61 <= *c && *c <= 0x7a {
+                    *c &= !0x20;
+                }
+            }
+
+            let mut write_offset = 0;
+            while write_offset < count {
+                match serial.write(&buf[write_offset..count]) {
+                    Ok(len) if len > 0 => {
+                        write_offset += len;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+#[interrupt]
+unsafe fn USB() {
+    // Как только прерывание случилось, мы посылаем сигнал потоку
+    // НО ивент вызвавший прерыывание пока не снялся, поэтому мы будем
+    // бесконечно в него заходить по кругу, нужно запретить пока что это
+    // прерывание
+    // TODO: device independent layer
+    cortex_m::peripheral::NVIC::mask(Interrupt::USB);
+    cortex_m::peripheral::NVIC::unpend(Interrupt::USB);
 }
 
 fn init_heap() {
