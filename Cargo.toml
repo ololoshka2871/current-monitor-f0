@@ -1,6 +1,6 @@
 [package]
 authors = ["ololoshka2871"]
-name = "stm32-rust-template"
+name = "current-monitor-f0"
 version = "0.1.0"
 edition = "2018"
 readme = "README.md"
@@ -9,17 +9,19 @@ resolver = "2"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cortex-m = "0.7.3"
+cortex-m = "0.7"
 cortex-m-rt = "0.7"
 
-# HAL (will be seectud my feature)
-stm32f0xx-hal = { version = "0.18.0", features = ["rt", "stm32-usbd"], optional = true }
-stm32l4xx-hal = { git = "https://github.com/stm32-rs/stm32l4xx-hal.git", features = ["rt", "unproven", "stm32-usbd"], tag = "v0.7.1", optional = true  }
+# HAL
+stm32f0xx-hal = { version = "0.18", features = ["rt", "stm32-usbd"] }
 
 # defmt
 defmt = "0.2"
 defmt-rtt = "0.2"
 panic-probe = { version = "0.2", features = ["print-defmt"] }
+
+#allocator
+alloc-cortex-m = "0.4.2"
 
 [profile.dev.package."*"]
 opt-level = "z"
@@ -39,11 +41,12 @@ lto = false # Делает только хуже
 
 [features]
 default = [
-    "stm32f042", # device
+    "stm32f042", # mcu
 
-    "defmt-default",
+    "defmt-default", # log level
 ]
 
+# select MCU
 stm32f042 = ["stm32f0xx-hal/stm32f042"]
 
 # defmt: do NOT modify these features

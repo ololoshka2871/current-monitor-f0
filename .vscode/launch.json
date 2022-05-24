@@ -11,7 +11,7 @@
             "name": "cortex-debug (Debug)",
             "type": "cortex-debug",
             "cwd": "${workspaceRoot}",
-            "executable": "<binary>", // бинарь
+            "executable": "target/thumbv6m-none-eabi/debug/current-monitor-f0", // бинарь
             "request": "attach", // позволяет не прошивать таргет при запуске
             "loadFiles": false, 
             "svdFile": "${workspaceRoot}/<SVD>.svd",
@@ -28,7 +28,7 @@
             "name": "cortex-debug (Release)",
             "type": "cortex-debug",
             "cwd": "${workspaceRoot}",
-            "executable": "<binary>", // бинарь
+            "executable": "target/thumbv6m-none-eabi/release/current-monitor-f0", // бинарь
             "request": "attach", // позволяет не прошивать таргет при запуске
             "loadFiles": false, 
             "svdFile": "${workspaceRoot}/<SVD>.svd",
