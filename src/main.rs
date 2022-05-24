@@ -8,11 +8,12 @@ mod support;
 
 use cortex_m_rt::entry;
 
-use ina219::{INA219, INA219_ADDR};
 // без этого будет ошибка отсутвия векторов прерываний
 use stm32f0xx_hal as hal;
 
-use hal::{pac, prelude::*};
+use hal::{i2c::I2c, pac, prelude::*};
+
+use ina219::{INA219, INA219_ADDR};
 
 //-------------------------------------------------------
 
@@ -32,26 +33,39 @@ fn main() -> ! {
     let i2c = if let Some(p) = pac::Peripherals::take() {
         cortex_m::interrupt::free(move |cs| {
             let mut flash = p.FLASH;
-            let mut rcc = p.RCC.configure().freeze(&mut flash);
+
+            let mut rcc = p
+                .RCC
+                .configure()
+                .hsi48()
+                .enable_crs(p.CRS)
+                .sysclk(48.mhz())
+                .pclk(24.mhz())
+                .freeze(&mut flash);
 
             let gpiob = p.GPIOB.split(&mut rcc);
 
             // Configure pins for I2C
-            let scl = gpiob.pb10.into_alternate_af1(cs);
-            let sda = gpiob.pb11.into_alternate_af1(cs);
+            let scl = gpiob.pb10.into_alternate_af1(cs).internal_pull_up(cs, true);
+            let sda = gpiob.pb11.into_alternate_af1(cs).internal_pull_up(cs, true);
 
             // Configure I2C with 100kHz rate
-            //I2c(hal::i2c::I2c::i2c1(p.I2C1, (scl, sda), 100.khz(), &mut rcc))
-            hal::i2c::I2c::i2c1(p.I2C1, (scl, sda), 100.khz(), &mut rcc)
+            I2c::i2c1(p.I2C1, (scl, sda), 100.khz(), &mut rcc)
         })
     } else {
         defmt::error!("Failed to take peripherials!");
         panic!();
     };
 
-    let mut ina = INA219::new(i2c, INA219_ADDR);
+    let mut ina = INA219::new(
+        i2c,
+        INA219_ADDR - 1, // A0, A1 == 0
+    );
 
-    ina.calibrate(0x0100).unwrap();
+    if let Err(e) = ina.calibrate(0x0000) {
+        defmt::error!("Calibration failed: {}", defmt::Debug2Format(&e));
+        panic!();
+    }
 
     loop {
         let voltage = ina.voltage().unwrap();
