@@ -4,11 +4,13 @@ MEMORY
   /* TODO Adjust these memory regions to match your device memory layout */
   /* These values correspond to the LM3S6965, one of the few devices QEMU can emulate */
 
-  /* 3.2 FLASH main features: page size = 2K */
-  FLASH : ORIGIN = 0x08000000, LENGTH = 256K - 1 * 2K
-  SETTINGS: ORIGIN = 0x08000000 + 256K - 1 * 2K, LENGTH = 1 * 2K
+  /* -- F0 family -- */
 
-  RAM : ORIGIN = 0x20000000, LENGTH = 64K
+  /* 3.2 FLASH main features: page size = 1K */
+  FLASH : ORIGIN = 0x08000000, LENGTH = 32K - 1 * 1K
+  SETTINGS: ORIGIN = 0x08000000 + 32K - 1 * 2K, LENGTH = 1 * 1K
+
+  RAM : ORIGIN = 0x20000000, LENGTH = 6K
 }
 
 /* This is where the call stack will be allocated. */
