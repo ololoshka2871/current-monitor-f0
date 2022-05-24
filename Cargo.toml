@@ -23,6 +23,9 @@ panic-probe = { version = "0.2", features = ["print-defmt"] }
 #allocator
 alloc-cortex-m = "0.4.2"
 
+# ina219
+ina219 = "0.1.0"
+
 [profile.dev.package."*"]
 opt-level = "z"
 
