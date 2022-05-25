@@ -85,7 +85,7 @@ fn main() -> ! {
 
     let mut usb_dev = usb_device::device::UsbDeviceBuilder::new(
         &usb_bus,
-        usb_device::device::UsbVidPid(0x16c0, 0x27dd),
+        usb_device::device::UsbVidPid(0x0483, 0x5789),
     )
     .manufacturer("Shilo_XyZ_")
     .product("Fast Ampermeter")
@@ -117,20 +117,18 @@ fn main() -> ! {
         // что были инициализированы интерфейсы
         let res = usb_dev.poll(&mut [&mut serial]);
 
-        if !res {
-            /* TODO
+        if res {
+            serial_echo(&mut serial);
+        } else {
             // block until usb interrupt
             // enable usb interrupt
             unsafe { cortex_m::peripheral::NVIC::unmask(Interrupt::USB) };
 
-            // sleep
-            cortex_m::asm::wfi();
+            // sleep (wfi() почему-то не работает.)
+            cortex_m::asm::wfe();
 
             // disable usb interrupt
             cortex_m::peripheral::NVIC::mask(Interrupt::USB);
-            */
-        } else {
-            serial_echo(&mut serial);
         }
     }
 }
@@ -163,11 +161,8 @@ fn serial_echo<B: usb_device::bus::UsbBus>(serial: &mut usbd_serial::SerialPort<
 
 #[interrupt]
 unsafe fn USB() {
-    // Как только прерывание случилось, мы посылаем сигнал потоку
-    // НО ивент вызвавший прерыывание пока не снялся, поэтому мы будем
-    // бесконечно в него заходить по кругу, нужно запретить пока что это
-    // прерывание
-    // TODO: device independent layer
+    // путое прерывание, просто чтобы проц проснулся
+
     cortex_m::peripheral::NVIC::mask(Interrupt::USB);
     cortex_m::peripheral::NVIC::unpend(Interrupt::USB);
 }

@@ -14,7 +14,7 @@
             "executable": "target/thumbv6m-none-eabi/debug/current-monitor-f0", // бинарь
             "request": "attach", // позволяет не прошивать таргет при запуске
             "loadFiles": false, 
-            "svdFile": "${workspaceRoot}/<SVD>.svd",
+            "svdFile": "${workspaceRoot}/STM32F0x2.svd",
             "servertype": "external", // Подключиться к внешнему отладочному интерфейсу
             "gdbTarget": "localhost:2331", // адрес куда подключаться
             "postAttachCommands": [
@@ -31,7 +31,7 @@
             "executable": "target/thumbv6m-none-eabi/release/current-monitor-f0", // бинарь
             "request": "attach", // позволяет не прошивать таргет при запуске
             "loadFiles": false, 
-            "svdFile": "${workspaceRoot}/<SVD>.svd",
+            "svdFile": "${workspaceRoot}/STM32F0x2.svd",
             "servertype": "external", // Подключиться к внешнему отладочному интерфейсу
             "gdbTarget": "localhost:2331", // адрес куда подключаться
             "postAttachCommands": [
