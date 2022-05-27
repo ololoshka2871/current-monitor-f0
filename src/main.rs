@@ -115,7 +115,7 @@ fn main() -> ! {
         HID = Some(HIDClass::new(
             USB_BUS.as_ref().unwrap_unchecked(),
             report::Ina219Report::desc(),
-            60,
+            10,
         ));
     }
 
@@ -138,12 +138,12 @@ fn main() -> ! {
 
         let c: *mut cortex_m::peripheral::NVIC = &nvic as *const _ as *mut _;
         (*c).set_priority(interrupt::USB, 1);
+        
 
         // exit wfe() on eny HW event
         (*cortex_m::peripheral::SCB::ptr())
             .scr
             .modify(|scr| scr | SCB_SCR_SEVONPEND);
-        //(*c).set_priority(interrupt::TIM14, 2);
     }
 
     loop {
@@ -151,9 +151,9 @@ fn main() -> ! {
         // enable usb interrupt
         unsafe { cortex_m::peripheral::NVIC::unmask(interrupt::USB) };
 
-        // sleep
-        #[cfg(not(debug_assertions))]
-        cortex_m::asm::wfe();
+        // sleep (not working ?)
+        //#[cfg(not(debug_assertions))]
+        //cortex_m::asm::wfe();
 
         // disable usb interrupt
         cortex_m::peripheral::NVIC::mask(interrupt::USB);
