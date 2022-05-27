@@ -9,7 +9,6 @@ mod support;
 
 use cortex_m_rt::entry;
 
-use hal::time::Hertz;
 // без этого будет ошибка отсутвия векторов прерываний
 use stm32f0xx_hal as hal;
 
@@ -30,6 +29,9 @@ static ALLOCATOR: alloc_cortex_m::CortexMHeap = alloc_cortex_m::CortexMHeap::emp
 
 //-------------------------------------------------------
 
+const R_SHUNT: f32 = 0.1 * 4.0; // Shunt resistance
+const CAL: u16 = (4096.0 / 100.0 / R_SHUNT) as u16;
+
 static mut USB_BUS: Option<UsbBusAllocator<UsbBus<Peripheral>>> = None;
 static mut USB_DEV: Option<UsbDevice<UsbBus<Peripheral>>> = None;
 static mut HID: Option<HIDClass<UsbBus<Peripheral>>> = None;
@@ -41,7 +43,7 @@ fn main() -> ! {
     // Initialize the allocator BEFORE you use it
     init_heap();
 
-    let (i2c, nvic, mut timer) =
+    let (mut i2c, nvic, mut timer) =
         if let (Some(cp), Some(dp)) = (cortex_m::Peripherals::take(), pac::Peripherals::take()) {
             cortex_m::interrupt::free(move |cs| {
                 let mut flash = dp.FLASH;
@@ -61,8 +63,8 @@ fn main() -> ! {
                 let scl = gpiob.pb10.into_alternate_af1(cs).internal_pull_up(cs, true);
                 let sda = gpiob.pb11.into_alternate_af1(cs).internal_pull_up(cs, true);
 
-                // Configure I2C with 100kHz rate
-                let i2c = I2c::i2c1(dp.I2C1, (scl, sda), 100.khz(), &mut rcc);
+                // Configure I2C with 400kHz rate
+                let i2c = I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), &mut rcc);
 
                 let gpioa = dp.GPIOA.split(&mut rcc);
 
@@ -76,7 +78,7 @@ fn main() -> ! {
                     USB_BUS = Some(hal::usb::UsbBus::new(usb));
                 }
 
-                let timer = Timer::tim14(dp.TIM14, Hertz(10), &mut rcc);
+                let timer = Timer::tim14(dp.TIM14, 100.hz(), &mut rcc);
 
                 (i2c, cp.NVIC, timer)
             })
@@ -85,13 +87,25 @@ fn main() -> ! {
             panic!();
         };
 
+    if let Err(e) = i2c.write(
+        INA219_ADDR - 1,
+        &[
+            0u8,        // config register
+            0b00100001, // BRNG | PG = 0b00 | BADC = 0b0011 |
+            0b10011111, // SADC = 0b0011 | mode = 0b111
+        ],
+    ) {
+        defmt::error!("Ina219 config failed: {}", defmt::Debug2Format(&e));
+        panic!();
+    }
+
     let mut ina = INA219::new(
         i2c,
         INA219_ADDR - 1, // A0, A1 == 0
     );
 
-    defmt::info!("Calibration...");
-    if let Err(e) = ina.calibrate(0x0000) {
+    defmt::info!("Calibration... ({})", CAL);
+    if let Err(e) = ina.calibrate(CAL) {
         defmt::error!("Calibration failed: {}", defmt::Debug2Format(&e));
         panic!();
     }

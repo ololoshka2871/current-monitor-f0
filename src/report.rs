@@ -31,7 +31,7 @@ impl Ina219Report {
         I2C: i2c::Write<Error = E> + i2c::Read<Error = E>,
     {
         Ok(Self {
-            voltage: ina.voltage()?,
+            voltage: ina.voltage()?, // mv
             shunt_voltage: ina.shunt_voltage()?,
             current: ina.current()?,
             power: ina.power()?,
