@@ -8,7 +8,7 @@ MEMORY
 
   /* 3.2 FLASH main features: page size = 1K */
   FLASH : ORIGIN = 0x08000000, LENGTH = 32K - 1 * 1K
-  SETTINGS: ORIGIN = 0x08000000 + 32K - 1 * 2K, LENGTH = 1 * 1K
+  SETTINGS : ORIGIN = 0x08000000 + 32K - 1 * 2K, LENGTH = 1 * 1K
 
   RAM : ORIGIN = 0x20000000, LENGTH = 6K
 }

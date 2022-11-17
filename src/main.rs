@@ -138,7 +138,6 @@ fn main() -> ! {
 
         let c: *mut cortex_m::peripheral::NVIC = &nvic as *const _ as *mut _;
         (*c).set_priority(interrupt::USB, 1);
-        
 
         // exit wfe() on eny HW event
         (*cortex_m::peripheral::SCB::ptr())
