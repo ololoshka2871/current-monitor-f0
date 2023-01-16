@@ -1,7 +1,7 @@
 [package]
 authors = ["ololoshka2871"]
 name = "current-monitor-f0"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2018"
 readme = "README.md"
 resolver = "2"
@@ -15,14 +15,11 @@ cortex-m-rt = "0.7"
 # HAL
 stm32f0xx-hal = { version = "0.18", features = ["rt", "stm32-usbd"] }
 embedded-hal = "0.2.7"
+panic-halt = "0.2.0"
 
-# defmt
-defmt = "0.2"
-defmt-rtt = "0.2"
-panic-probe = { version = "0.2", features = ["print-defmt"] }
-
-#allocator
-alloc-cortex-m = "0.4.2"
+# RTIC
+cortex-m-rtic = { version = "1.1" }
+systick-monotonic = "1.0.1"
 
 # ina219
 ina219 = "0.1.0"
@@ -57,17 +54,7 @@ lto = false # Делает только хуже
 [features]
 default = [
     "stm32f042", # mcu
-
-    "defmt-default", # log level
 ]
 
 # select MCU
 stm32f042 = ["stm32f0xx-hal/stm32f042"]
-
-# defmt: do NOT modify these features
-defmt-default = []
-defmt-trace = []
-defmt-debug = []
-defmt-info = []
-defmt-warn = []
-defmt-error = []

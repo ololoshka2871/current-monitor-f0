@@ -1,200 +1,179 @@
 #![no_std]
 #![no_main]
-#![feature(alloc_error_handler)]
 
-extern crate alloc;
-
+mod config;
 mod report;
-mod support;
 
-use cortex_m_rt::entry;
+use panic_halt as _;
 
-// без этого будет ошибка отсутвия векторов прерываний
-use stm32f0xx_hal as hal;
+use rtic::app;
+use systick_monotonic::Systick;
 
-use hal::timers::Timer;
-use hal::{i2c::I2c, pac, pac::interrupt, prelude::*, usb::Peripheral};
+use stm32f0xx_hal::{
+    gpio::{
+        gpiob::{PB10, PB11},
+        Alternate, AF1,
+    },
+    i2c::I2c,
+    prelude::*,
+    stm32::Interrupt,
+    stm32::{I2C1, TIM14},
+    timers::Timer,
+    usb::Peripheral,
+};
+
+use stm32_usbd::UsbBus;
+use usb_device::class_prelude::UsbBusAllocator;
+use usb_device::prelude::UsbDevice;
+
+use usbd_hid::descriptor::SerializedDescriptor;
+use usbd_hid::hid_class::HIDClass;
 
 use ina219::{INA219, INA219_ADDR};
 
-use stm32_usbd::UsbBus;
-use usb_device::{class_prelude::UsbBusAllocator, device::UsbDevice};
-use usbd_hid::{descriptor::SerializedDescriptor, hid_class::HIDClass};
+/// Calibration value
+pub const CAL: u16 = (4096.0 / 100.0 / config::R_SHUNT) as u16;
 
-//-------------------------------------------------------
+#[app(device = stm32f0xx_hal::pac, peripherals = true)]
+mod app {
+    use super::*;
 
-// replace with FreeRTOS-rust allocator if use freertos
-#[global_allocator]
-static ALLOCATOR: alloc_cortex_m::CortexMHeap = alloc_cortex_m::CortexMHeap::empty();
+    #[shared]
+    struct Shared {
+        hid: HIDClass<'static, UsbBus<Peripheral>>,
+    }
 
-//-------------------------------------------------------
+    #[local]
+    struct Local {
+        usb_dev: UsbDevice<'static, UsbBus<Peripheral>>,
+        ina219: INA219<I2c<I2C1, PB10<Alternate<AF1>>, PB11<Alternate<AF1>>>>,
+        _timer: Timer<TIM14>,
+    }
 
-const R_SHUNT: f32 = 0.1 * 4.0; // Shunt resistance
-const CAL: u16 = (4096.0 / 100.0 / R_SHUNT) as u16;
+    #[monotonic(binds = SysTick, default = true)]
+    type MonoTimer = Systick<1000>;
 
-static mut USB_BUS: Option<UsbBusAllocator<UsbBus<Peripheral>>> = None;
-static mut USB_DEV: Option<UsbDevice<UsbBus<Peripheral>>> = None;
-static mut HID: Option<HIDClass<UsbBus<Peripheral>>> = None;
+    #[init]
+    fn init(ctx: init::Context) -> (Shared, Local, init::Monotonics) {
+        static mut USB_BUS: Option<UsbBusAllocator<UsbBus<Peripheral>>> = None;
 
-#[entry]
-fn main() -> ! {
-    defmt::info!("++ Startup ++");
+        let mut flash = ctx.device.FLASH;
 
-    // Initialize the allocator BEFORE you use it
-    init_heap();
+        let mut rcc = ctx
+            .device
+            .RCC
+            .configure()
+            .hsi48()
+            .enable_crs(ctx.device.CRS)
+            .sysclk(48.mhz())
+            .pclk(24.mhz())
+            .freeze(&mut flash);
 
-    let (mut i2c, nvic, mut timer) =
-        if let (Some(cp), Some(dp)) = (cortex_m::Peripherals::take(), pac::Peripherals::take()) {
-            cortex_m::interrupt::free(move |cs| {
-                let mut flash = dp.FLASH;
+        let mono = Systick::new(ctx.core.SYST, rcc.clocks.sysclk().0);
 
-                let mut rcc = dp
-                    .RCC
-                    .configure()
-                    .hsi48()
-                    .enable_crs(dp.CRS)
-                    .sysclk(48.mhz())
-                    .pclk(24.mhz())
-                    .freeze(&mut flash);
+        let gpioa = ctx.device.GPIOA.split(&mut rcc);
+        let gpiob = ctx.device.GPIOB.split(&mut rcc);
 
-                let gpiob = dp.GPIOB.split(&mut rcc);
-
-                // Configure pins for I2C
-                let scl = gpiob.pb10.into_alternate_af1(cs).internal_pull_up(cs, true);
-                let sda = gpiob.pb11.into_alternate_af1(cs).internal_pull_up(cs, true);
-
-                // Configure I2C with 400kHz rate
-                let i2c = I2c::i2c1(dp.I2C1, (scl, sda), 400.khz(), &mut rcc);
-
-                let gpioa = dp.GPIOA.split(&mut rcc);
-
-                let usb = hal::usb::Peripheral {
-                    usb: dp.USB,
-                    pin_dm: gpioa.pa11,
-                    pin_dp: gpioa.pa12,
-                };
-
-                unsafe {
-                    USB_BUS = Some(hal::usb::UsbBus::new(usb));
-                }
-
-                let timer = Timer::tim14(dp.TIM14, 100.hz(), &mut rcc);
-
-                (i2c, cp.NVIC, timer)
-            })
-        } else {
-            defmt::error!("Failed to take peripherials!");
-            panic!();
+        let usb = Peripheral {
+            usb: ctx.device.USB,
+            pin_dm: gpioa.pa11,
+            pin_dp: gpioa.pa12,
         };
 
-    if let Err(e) = i2c.write(
-        INA219_ADDR - 1,
-        &[
-            0u8,        // config register
-            0b00100001, // BRNG | PG = 0b00 | BADC = 0b0011 |
-            0b10011111, // SADC = 0b0011 | mode = 0b111
-        ],
-    ) {
-        defmt::error!("Ina219 config failed: {}", defmt::Debug2Format(&e));
-        panic!();
-    }
+        unsafe {
+            USB_BUS = Some(UsbBus::new(usb));
+        }
 
-    let mut ina = INA219::new(
-        i2c,
-        INA219_ADDR - 1, // A0, A1 == 0
-    );
+        let mut timer = Timer::tim14(ctx.device.TIM14, 100.hz(), &mut rcc);
+        timer.listen(stm32f0xx_hal::timers::Event::TimeOut);
 
-    defmt::info!("Calibration... ({})", CAL);
-    if let Err(e) = ina.calibrate(CAL) {
-        defmt::error!("Calibration failed: {}", defmt::Debug2Format(&e));
-        panic!();
-    }
+        let i2c1 = ctx.device.I2C1;
+        let mut i2c = cortex_m::interrupt::free(move |cs| {
+            // Configure pins for I2C
+            let scl = gpiob.pb10.into_alternate_af1(cs).internal_pull_up(cs, true);
+            let sda = gpiob.pb11.into_alternate_af1(cs).internal_pull_up(cs, true);
 
-    defmt::info!("Register hid interface");
-    unsafe {
-        HID = Some(HIDClass::new(
-            USB_BUS.as_ref().unwrap_unchecked(),
+            // Configure I2C with 400kHz rate
+            I2c::i2c1(i2c1, (scl, sda), 400.khz(), &mut rcc)
+        });
+
+        if i2c
+            .write(
+                INA219_ADDR - 1,
+                // INA219 config register setup
+                &[
+                    0u8,        // config register
+                    0b00100001, // BRNG | PG = 0b00 | BADC = 0b0011 |
+                    0b10011111, // SADC = 0b0011 | mode = 0b111
+                ],
+            )
+            .is_err()
+        {
+            panic!("Ina219 config failed");
+        }
+
+        let mut ina = INA219::new(
+            i2c,
+            INA219_ADDR - 1, // A0, A1 == 0
+        );
+
+        if ina.calibrate(CAL).is_err() {
+            panic!("Calibration failed");
+        }
+
+        let hid = HIDClass::new(
+            unsafe { USB_BUS.as_ref().unwrap_unchecked() },
             report::Ina219Report::desc(),
             10,
-        ));
-    }
-
-    defmt::info!("Register USB device");
-    unsafe {
-        USB_DEV = Some(
-            usb_device::device::UsbDeviceBuilder::new(
-                USB_BUS.as_ref().unwrap_unchecked(),
-                usb_device::device::UsbVidPid(0x0483, 0x5789),
-            )
-            .manufacturer("Shilo_XyZ_")
-            .product("Fast Ampermeter")
-            .serial_number("0000001")
-            .build(),
         );
+
+        let usb_device = usb_device::device::UsbDeviceBuilder::new(
+            unsafe { USB_BUS.as_ref().unwrap_unchecked() },
+            usb_device::device::UsbVidPid(0x0483, 0x5789),
+        )
+        .manufacturer("Shilo_XyZ_")
+        .product("Fast Ampermeter")
+        .serial_number("0000002")
+        .build();
+
+        (
+            Shared { hid },
+            Local {
+                usb_dev: usb_device,
+                ina219: ina,
+                _timer: timer,
+            },
+            init::Monotonics(mono),
+        )
     }
 
-    unsafe {
-        const SCB_SCR_SEVONPEND: u32 = 1 << 4;
-
-        let c: *mut cortex_m::peripheral::NVIC = &nvic as *const _ as *mut _;
-        (*c).set_priority(interrupt::USB, 1);
-
-        // exit wfe() on eny HW event
-        (*cortex_m::peripheral::SCB::ptr())
-            .scr
-            .modify(|scr| scr | SCB_SCR_SEVONPEND);
-    }
-
-    loop {
-        // block until usb interrupt
-        // enable usb interrupt
-        unsafe { cortex_m::peripheral::NVIC::unmask(interrupt::USB) };
-
-        // sleep (not working ?)
-        //#[cfg(not(debug_assertions))]
-        //cortex_m::asm::wfe();
-
-        // disable usb interrupt
-        cortex_m::peripheral::NVIC::mask(interrupt::USB);
-
-        if timer.wait().is_ok() {
-            if let Some(_hid) = unsafe { HID.as_mut() } {
-                match report::Ina219Report::new(&mut ina) {
-                    Ok(report) => {
-                        if let Err(e) = report.push(_hid) {
-                            defmt::error!("USB error: {}", defmt::Debug2Format(&e))
-                        }
-                    }
-                    Err(e) => defmt::error!("I2C error: {}", defmt::Debug2Format(&e)),
-                }
-            }
+    #[idle]
+    fn idle(_ctx: idle::Context) -> ! {
+        loop {
+            cortex_m::asm::wfi();
         }
     }
-}
 
-#[interrupt]
-unsafe fn USB() {
-    if let (Some(usb_dev), Some(hid)) = (USB_DEV.as_mut(), HID.as_mut()) {
-        // Важно! Список передаваемый сюда в том же порядке,
-        // что были инициализированы интерфейсы
-        usb_dev.poll(&mut [hid]);
+    #[task(binds = USB, local = [usb_dev], shared = [hid], priority = 2)]
+    fn usb(mut ctx: usb::Context) {
+        let usb_dev = ctx.local.usb_dev;
+
+        ctx.shared.hid.lock(|hid| {
+            usb_dev.poll(&mut [hid]);
+        });
     }
 
-    cortex_m::peripheral::NVIC::mask(interrupt::USB);
-    cortex_m::peripheral::NVIC::unpend(interrupt::USB);
-}
-
-#[interrupt]
-unsafe fn TIM14() {
-    // just disable interrupt, dont clear flag in timer
-    cortex_m::peripheral::NVIC::mask(interrupt::TIM14);
-    cortex_m::peripheral::NVIC::unpend(interrupt::TIM14);
-}
-
-fn init_heap() {
-    use core::mem::MaybeUninit;
-    const HEAP_SIZE: usize = 2048;
-    static mut HEAP: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-    unsafe { ALLOCATOR.init(HEAP.as_ptr() as usize, HEAP_SIZE) }
-    defmt::info!("Initialized Heap with size {} Bytes", HEAP_SIZE);
+    #[task(binds = TIM14, local = [ina219], shared = [hid])]
+    fn tim14(mut ctx: tim14::Context) {
+        match report::Ina219Report::new(&mut ctx.local.ina219) {
+            Ok(report) => {
+                ctx.shared.hid.lock(|hid| {
+                    if report.push_to_hid(hid).is_ok() {
+                        rtic::pend(Interrupt::USB);
+                    }
+                });
+            }
+            Err(_) => {}
+        }
+    }
 }

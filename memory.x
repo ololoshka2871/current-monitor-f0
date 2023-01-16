@@ -7,9 +7,7 @@ MEMORY
   /* -- F0 family -- */
 
   /* 3.2 FLASH main features: page size = 1K */
-  FLASH : ORIGIN = 0x08000000, LENGTH = 32K - 1 * 1K
-  SETTINGS : ORIGIN = 0x08000000 + 32K - 1 * 2K, LENGTH = 1 * 1K
-
+  FLASH : ORIGIN = 0x08000000, LENGTH = 32K
   RAM : ORIGIN = 0x20000000, LENGTH = 6K
 }
 
@@ -39,11 +37,3 @@ _stack_start = ORIGIN(RAM) + LENGTH(RAM);
      } > RAM2
    } INSERT AFTER .bss;
 */
-
-SECTIONS {
-   .settings (NOLOAD) : ALIGN(8)
-   {
-      __settings_pos = .;
-      KEEP(*(.settings*));
-   } > SETTINGS
-}

@@ -38,7 +38,7 @@ impl Ina219Report {
         })
     }
 
-    pub fn push<B>(&self, hid: &mut HIDClass<B>) -> usb_device::Result<usize>
+    pub fn push_to_hid<B>(&self, hid: &mut HIDClass<B>) -> usb_device::Result<usize>
     where
         B: usb_device::bus::UsbBus,
     {
